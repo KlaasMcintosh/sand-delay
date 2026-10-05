@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>SandDelay MVP</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #fff; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; height: 100vh; }
+    
+    #playback { width: 100vw; height: 100vh; object-fit: cover; }
+    
+    .overlay {
+      position: absolute; top: 16px; left: 16px;
+      background: rgba(0, 0, 0, 0.65); padding: 8px 14px;
+      border-radius: 8px; font-size: 14px; font-weight: 500;
+    }
+    
+    .controls {
+      position: absolute; bottom: 32px; left: 50%;
+      transform: translateX(-50%); display: flex; gap: 12px;
+      align-items: center; width: 90%; max-width: 420px;
+    }
+    
+    button {
+      border: none; border-radius: 50px; font-weight: 700;
+      font-size: 15px; cursor: pointer; transition: opacity 0.2s;
+      padding: 14px 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    button:active { opacity: 0.8; }
+    
+    #toggle-btn { background: #34c759; color: #fff; flex: 1; }
+    #save-btn { background: #ff3b30; color: #fff; flex: 1.4; display: none; }
+    #save-btn:disabled { background: #555; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="overlay" id="status">Status: Idle</div>
+
+  <video id="live" autoplay playsinline muted style="display: none;"></video>
+  <video id="playback" autoplay playsinline muted></video>
+
+  <div class="controls">
+    <button id="toggle-btn">Start Session</button>
+    <button id="save-btn" disabled>Save Last 15s</button>
+  </div>
+
+  <script>
+    const DELAY_SEC = 10;
+    const SAVE_DURATION_SEC = 15;
+    
+    let stream = null;
+    let mediaRecorder = null;
+    let wakeLock = null;
+    let buffer = [];
+    let isRunning = false;
+    let playInterval = null;
+
+    const toggleBtn = document.getElementById('toggle-btn');
+    const saveBtn = document.getElementById('save-btn');
+    const statusText = document.getElementById('status');
+    const liveVideo = document.getElementById('live');
+    const playbackVideo = document.getElementById('playback');
+
+    toggleBtn.addEventListener('click', () => {
+      if (!isRunning) startSession();
+      else stopSession();
+    });
+
+    async function startSession() {
+      try {
+        statusText.innerText = "Requesting camera...";
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        liveVideo.srcObject = stream;
+
+        // Wake Lock to keep phone screen awake
+        if ('wakeLock' in navigator) {
+          try { wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+        }
+
+        const mimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+        buffer = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            const now = Date.now();
+            buffer.push({ timestamp: now, blob: e.data });
+            const cutoff = now - 35000;
+            buffer = buffer.filter(item => item.timestamp >= cutoff);
+          }
+        };
+
+        mediaRecorder.start(1000);
+        isRunning = true;
+        toggleBtn.innerText = "Stop Session";
+        toggleBtn.style.background = "#555";
+        saveBtn.style.display = "block";
+        saveBtn.disabled = true;
+
+        let secondsRemaining = DELAY_SEC;
+        const countdown = setInterval(() => {
+          if (!isRunning) { clearInterval(countdown); return; }
+          secondsRemaining--;
+          if (secondsRemaining > 0) {
+            statusText.innerText = `Buffering: ${secondsRemaining}s left...`;
+          } else {
+            clearInterval(countdown);
+            statusText.innerText = `Running (10s Delay)`;
+            saveBtn.disabled = false;
+            initDelayedPlayback();
+          }
+        }, 1000);
+
+      } catch (err) {
+        alert("Camera error: " + err.message);
+        statusText.innerText = "Camera Access Denied";
+      }
+    }
+
+    function initDelayedPlayback() {
+      playInterval = setInterval(() => {
+        if (!isRunning) return;
+        const targetTime = Date.now() - (DELAY_SEC * 1000);
+        const validChunks = buffer.filter(b => b.timestamp <= targetTime);
+        if (validChunks.length > 0 && playbackVideo.paused) {
+          const streamBlob = new Blob(validChunks.map(c => c.blob), { type: 'video/mp4' });
+          playbackVideo.src = URL.createObjectURL(streamBlob);
+          playbackVideo.play().catch(() => {});
+        }
+      }, 1000);
+    }
+
+    function stopSession() {
+      isRunning = false;
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (wakeLock) { wakeLock.release(); wakeLock = null; }
+      if (playInterval) clearInterval(playInterval);
+
+      liveVideo.srcObject = null;
+      playbackVideo.src = "";
+      buffer = [];
+
+      toggleBtn.innerText = "Start Session";
+      toggleBtn.style.background = "#34c759";
+      saveBtn.style.display = "none";
+      statusText.innerText = "Status: Stopped";
+    }
+
+    saveBtn.addEventListener('click', async () => {
+      const now = Date.now();
+      const startTime = now - (SAVE_DURATION_SEC * 1000);
+      const clipsToSave = buffer.filter(c => c.timestamp >= startTime);
+
+      if (clipsToSave.length === 0) return;
+
+      const fullBlob = new Blob(clipsToSave.map(c => c.blob), { type: 'video/mp4' });
+      const file = new File([fullBlob], `sand-clip-${Date.now()}.mp4`, { type: 'video/mp4' });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'Beach Volleyball Clip'
+        });
+      } else {
+        const url = URL.createObjectURL(fullBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `sand-clip-${Date.now()}.mp4`;
+        a.click();
+      }
+    });
+  </script>
+</body>
+</html>
