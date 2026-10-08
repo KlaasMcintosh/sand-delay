@@ -1,179 +1,213 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>SandDelay MVP</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #111; color: #fff; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; height: 100vh; }
-    
-    #playback { width: 100vw; height: 100vh; object-fit: cover; }
-    
-    .overlay {
-      position: absolute; top: 16px; left: 16px;
-      background: rgba(0, 0, 0, 0.65); padding: 8px 14px;
-      border-radius: 8px; font-size: 14px; font-weight: 500;
-    }
-    
-    .controls {
-      position: absolute; bottom: 32px; left: 50%;
-      transform: translateX(-50%); display: flex; gap: 12px;
-      align-items: center; width: 90%; max-width: 420px;
-    }
-    
-    button {
-      border: none; border-radius: 50px; font-weight: 700;
-      font-size: 15px; cursor: pointer; transition: opacity 0.2s;
-      padding: 14px 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    }
-    button:active { opacity: 0.8; }
-    
-    #toggle-btn { background: #34c759; color: #fff; flex: 1; }
-    #save-btn { background: #ff3b30; color: #fff; flex: 1.4; display: none; }
-    #save-btn:disabled { background: #555; cursor: not-allowed; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Delayed Form Replay — Instant athletic form review</title>
+<meta name="description" content="Watch your movement on a 10–30s delay and save the last minute of video, all in your browser." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;700&family=Barlow+Condensed:wght@700;800&display=swap" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          background: "var(--background)", foreground: "var(--foreground)", card: "var(--card)",
+          muted: "var(--muted)", "muted-foreground": "var(--muted-foreground)",
+          primary: "var(--primary)", "primary-foreground": "var(--primary-foreground)",
+          live: "var(--live)", border: "var(--border)",
+        },
+        fontFamily: {
+          display: ['"Barlow Condensed"', "system-ui", "sans-serif"],
+          sans: ["Barlow", "system-ui", "sans-serif"],
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root {
+    --background: oklch(0.12 0 0); --foreground: oklch(0.98 0 0); --card: oklch(0.18 0 0);
+    --muted: oklch(0.26 0 0); --muted-foreground: oklch(0.72 0 0);
+    --primary: oklch(0.9 0.2 125); --primary-foreground: oklch(0.12 0 0);
+    --live: oklch(0.65 0.24 27); --border: oklch(0.32 0 0);
+  }
+  * { border-color: var(--border); }
+  body { background: var(--background); color: var(--foreground); font-family: Barlow, system-ui, sans-serif; }
+  input[type="range"] { accent-color: var(--primary); }
+  .hidden-i { display: none !important; }
+</style>
 </head>
 <body>
-  <div class="overlay" id="status">Status: Idle</div>
+<main class="min-h-screen p-4 md:p-6 flex flex-col gap-4 max-w-6xl mx-auto">
+  <header class="flex items-center justify-between">
+    <h1 class="font-display text-3xl md:text-4xl font-extrabold uppercase tracking-tight">
+      Delayed <span class="text-primary">Form</span> Replay
+    </h1>
+    <button id="flipBtn" class="h-14 px-5 rounded-xl bg-muted font-bold text-lg active:scale-95 transition">⟲ Rear</button>
+  </header>
 
-  <video id="live" autoplay playsinline muted style="display: none;"></video>
-  <video id="playback" autoplay playsinline muted></video>
+  <section class="relative rounded-2xl overflow-hidden bg-card border-2 aspect-video">
+    <canvas id="replay" class="w-full h-full object-contain"></canvas>
+    <div id="overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-background/80">
+      <button id="startBtn" class="h-20 px-10 rounded-2xl bg-primary text-primary-foreground font-display text-3xl font-extrabold uppercase active:scale-95 transition">Start Camera</button>
+      <p id="countdown" class="font-display text-5xl font-extrabold hidden-i"></p>
+      <p id="error" class="text-live font-bold"></p>
+    </div>
+    <div id="delayBadge" class="absolute top-3 left-3 px-3 py-1 rounded-lg bg-background/80 font-display text-2xl font-extrabold">−15s</div>
+    <div class="absolute bottom-3 right-3 w-32 md:w-56 aspect-video rounded-xl overflow-hidden border-2 border-live bg-background">
+      <video id="live" muted playsinline class="w-full h-full object-cover"></video>
+      <span class="absolute top-1 left-2 text-xs font-bold text-live">● LIVE</span>
+    </div>
+  </section>
 
-  <div class="controls">
-    <button id="toggle-btn">Start Session</button>
-    <button id="save-btn" disabled>Save Last 15s</button>
-  </div>
+  <section class="grid md:grid-cols-[1fr_auto_auto] gap-4 items-center">
+    <div class="rounded-2xl bg-card border-2 p-5">
+      <div class="flex justify-between font-bold text-muted-foreground mb-2">
+        <span>DELAY</span><span id="delayVal" class="text-foreground font-display text-3xl">15s</span>
+      </div>
+      <input id="delay" type="range" min="10" max="30" value="15" class="w-full h-10" />
+      <div class="flex justify-between text-sm text-muted-foreground"><span>10s</span><span>30s</span></div>
+    </div>
 
-  <script>
-    const DELAY_SEC = 10;
-    const SAVE_DURATION_SEC = 15;
-    
-    let stream = null;
-    let mediaRecorder = null;
-    let wakeLock = null;
-    let buffer = [];
-    let isRunning = false;
-    let playInterval = null;
+    <div class="rounded-2xl bg-card border-2 p-4 flex items-center gap-3">
+      <svg width="124" height="124" viewBox="0 0 124 124" class="-rotate-90">
+        <circle cx="62" cy="62" r="52" fill="none" stroke="var(--muted)" stroke-width="10" />
+        <circle id="ringFill" cx="62" cy="62" r="52" fill="none" stroke="var(--primary)" stroke-opacity="0.35" stroke-width="10" />
+        <circle id="ringHead" cx="62" cy="62" r="52" fill="none" stroke="var(--primary)" stroke-width="10" stroke-linecap="round" />
+      </svg>
+      <div>
+        <p class="text-sm font-bold text-muted-foreground">BUFFER</p>
+        <p id="bufText" class="font-display text-3xl font-extrabold">0/60s</p>
+      </div>
+    </div>
 
-    const toggleBtn = document.getElementById('toggle-btn');
-    const saveBtn = document.getElementById('save-btn');
-    const statusText = document.getElementById('status');
-    const liveVideo = document.getElementById('live');
-    const playbackVideo = document.getElementById('playback');
+    <button id="saveBtn" disabled class="h-28 md:h-full min-h-28 px-8 rounded-2xl bg-live text-foreground font-display text-3xl font-extrabold uppercase disabled:opacity-40 active:scale-95 transition">⬇ Save Last Minute</button>
+  </section>
 
-    toggleBtn.addEventListener('click', () => {
-      if (!isRunning) startSession();
-      else stopSession();
-    });
+  <button id="stopBtn" class="self-center h-12 px-6 rounded-xl bg-muted font-bold hidden-i">Stop Camera</button>
+</main>
 
-    async function startSession() {
-      try {
-        statusText.innerText = "Requesting camera...";
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false
-        });
-        liveVideo.srcObject = stream;
+<script>
+(() => {
+  const BUFFER_S = 60, FPS = 15, R = 52, C = 2 * Math.PI * R;
+  const $ = (id) => document.getElementById(id);
+  const live = $("live"), canvas = $("replay"), overlay = $("overlay"), startBtn = $("startBtn"),
+        countdown = $("countdown"), errorEl = $("error"), delayInput = $("delay"), delayVal = $("delayVal"),
+        delayBadge = $("delayBadge"), ringFill = $("ringFill"), ringHead = $("ringHead"),
+        bufText = $("bufText"), saveBtn = $("saveBtn"), stopBtn = $("stopBtn"), flipBtn = $("flipBtn");
 
-        // Wake Lock to keep phone screen awake
-        if ('wakeLock' in navigator) {
-          try { wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+  ringFill.setAttribute("stroke-dasharray", C);
+  ringFill.setAttribute("stroke-dashoffset", C);
+  ringHead.setAttribute("stroke-dasharray", `6 ${C}`);
+
+  let delay = 15, facing = "environment", running = false;
+  let stream = null, recorder = null, frames = [], capTimer = 0, raf = 0, startedAt = 0;
+  let chunks = [], header = null, mime = "";
+  const off = document.createElement("canvas");
+
+  const pickMime = () => ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"]
+    .find((m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) || "";
+
+  const setDelay = (v) => { delay = v; delayVal.textContent = v + "s"; delayBadge.textContent = "−" + v + "s"; };
+  delayInput.addEventListener("input", (e) => setDelay(+e.target.value));
+
+  function setBuffered(n) {
+    bufText.textContent = `${n}/${BUFFER_S}s`;
+    ringFill.setAttribute("stroke-dashoffset", C * (1 - Math.min(n / BUFFER_S, 1)));
+    saveBtn.disabled = !n;
+  }
+
+  async function start() {
+    errorEl.textContent = "";
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false,
+      });
+      live.srcObject = stream;
+      await live.play();
+      running = true;
+      startBtn.classList.add("hidden-i"); countdown.classList.remove("hidden-i"); stopBtn.classList.remove("hidden-i");
+
+      chunks = []; header = null; mime = pickMime();
+      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recorder.ondataavailable = (e) => {
+        if (!e.data.size) return;
+        if (!header) { header = e.data; return; }
+        chunks.push(e.data);
+        while (chunks.length > BUFFER_S - 1) chunks.shift();
+        setBuffered(chunks.length + 1);
+      };
+      recorder.start(1000);
+      startedAt = Date.now();
+
+      capTimer = setInterval(async () => {
+        if (!live.videoWidth) return;
+        const w = 640, h = Math.round((live.videoHeight / live.videoWidth) * w);
+        off.width = w; off.height = h;
+        off.getContext("2d").drawImage(live, 0, 0, w, h);
+        const bmp = await createImageBitmap(off);
+        frames.push({ t: performance.now(), bmp });
+        const cutoff = performance.now() - 31000;
+        while (frames.length && frames[0].t < cutoff) frames.shift().bmp.close();
+      }, 1000 / FPS);
+
+      const draw = () => {
+        const target = performance.now() - delay * 1000;
+        let f;
+        for (let i = frames.length - 1; i >= 0; i--) if (frames[i].t <= target) { f = frames[i]; break; }
+        if (f) {
+          if (canvas.width !== f.bmp.width) { canvas.width = f.bmp.width; canvas.height = f.bmp.height; }
+          canvas.getContext("2d").drawImage(f.bmp, 0, 0);
         }
-
-        const mimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
-        mediaRecorder = new MediaRecorder(stream, { mimeType });
-
-        buffer = [];
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
-            const now = Date.now();
-            buffer.push({ timestamp: now, blob: e.data });
-            const cutoff = now - 35000;
-            buffer = buffer.filter(item => item.timestamp >= cutoff);
-          }
-        };
-
-        mediaRecorder.start(1000);
-        isRunning = true;
-        toggleBtn.innerText = "Stop Session";
-        toggleBtn.style.background = "#555";
-        saveBtn.style.display = "block";
-        saveBtn.disabled = true;
-
-        let secondsRemaining = DELAY_SEC;
-        const countdown = setInterval(() => {
-          if (!isRunning) { clearInterval(countdown); return; }
-          secondsRemaining--;
-          if (secondsRemaining > 0) {
-            statusText.innerText = `Buffering: ${secondsRemaining}s left...`;
-          } else {
-            clearInterval(countdown);
-            statusText.innerText = `Running (10s Delay)`;
-            saveBtn.disabled = false;
-            initDelayedPlayback();
-          }
-        }, 1000);
-
-      } catch (err) {
-        alert("Camera error: " + err.message);
-        statusText.innerText = "Camera Access Denied";
-      }
+        const elapsed = (Date.now() - startedAt) / 1000;
+        if (elapsed >= delay) overlay.classList.add("hidden-i");
+        else { overlay.classList.remove("hidden-i"); countdown.textContent = `Replay in ${Math.ceil(delay - elapsed)}s`; }
+        ringHead.setAttribute("stroke-dashoffset", -C * ((elapsed % BUFFER_S) / BUFFER_S));
+        raf = requestAnimationFrame(draw);
+      };
+      raf = requestAnimationFrame(draw);
+    } catch (e) {
+      errorEl.textContent = e && e.message ? e.message : "Camera unavailable";
+      stop();
     }
+  }
 
-    function initDelayedPlayback() {
-      playInterval = setInterval(() => {
-        if (!isRunning) return;
-        const targetTime = Date.now() - (DELAY_SEC * 1000);
-        const validChunks = buffer.filter(b => b.timestamp <= targetTime);
-        if (validChunks.length > 0 && playbackVideo.paused) {
-          const streamBlob = new Blob(validChunks.map(c => c.blob), { type: 'video/mp4' });
-          playbackVideo.src = URL.createObjectURL(streamBlob);
-          playbackVideo.play().catch(() => {});
-        }
-      }, 1000);
-    }
+  function stop() {
+    running = false;
+    clearInterval(capTimer); cancelAnimationFrame(raf);
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    recorder = null;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    frames.forEach((f) => f.bmp.close()); frames = [];
+    setBuffered(0);
+    ringHead.setAttribute("stroke-dashoffset", 0);
+    overlay.classList.remove("hidden-i"); startBtn.classList.remove("hidden-i");
+    countdown.classList.add("hidden-i"); stopBtn.classList.add("hidden-i");
+  }
 
-    function stopSession() {
-      isRunning = false;
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      if (wakeLock) { wakeLock.release(); wakeLock = null; }
-      if (playInterval) clearInterval(playInterval);
+  function save() {
+    if (!header) return;
+    const type = (mime || "video/webm").split(";")[0];
+    const blob = new Blob([header, ...chunks], { type });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `form-replay-${new Date().toISOString().replace(/[:.]/g, "-")}.${type.includes("mp4") ? "mp4" : "webm"}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
 
-      liveVideo.srcObject = null;
-      playbackVideo.src = "";
-      buffer = [];
-
-      toggleBtn.innerText = "Start Session";
-      toggleBtn.style.background = "#34c759";
-      saveBtn.style.display = "none";
-      statusText.innerText = "Status: Stopped";
-    }
-
-    saveBtn.addEventListener('click', async () => {
-      const now = Date.now();
-      const startTime = now - (SAVE_DURATION_SEC * 1000);
-      const clipsToSave = buffer.filter(c => c.timestamp >= startTime);
-
-      if (clipsToSave.length === 0) return;
-
-      const fullBlob = new Blob(clipsToSave.map(c => c.blob), { type: 'video/mp4' });
-      const file = new File([fullBlob], `sand-clip-${Date.now()}.mp4`, { type: 'video/mp4' });
-
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: 'Beach Volleyball Clip'
-        });
-      } else {
-        const url = URL.createObjectURL(fullBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `sand-clip-${Date.now()}.mp4`;
-        a.click();
-      }
-    });
-  </script>
+  startBtn.addEventListener("click", start);
+  stopBtn.addEventListener("click", stop);
+  saveBtn.addEventListener("click", save);
+  flipBtn.addEventListener("click", () => {
+    facing = facing === "environment" ? "user" : "environment";
+    flipBtn.textContent = "⟲ " + (facing === "environment" ? "Rear" : "Front");
+    if (running) { stop(); start(); }
+  });
+})();
+</script>
 </body>
 </html>
